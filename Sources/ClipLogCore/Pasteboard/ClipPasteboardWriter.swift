@@ -19,6 +19,32 @@ public enum ClipPasteboardWriter {
     private static let payloadEncoder = PropertyListEncoder()
     private static let payloadDecoder = PropertyListDecoder()
 
+    // Hashes we wrote ourselves (HUD paste/copy, history re-paste, queue).
+    // The watcher re-captures our own write ~350ms later as a "new" entry;
+    // feedback like the copy pop must ignore those so pasting doesn't pop.
+    private static let selfWriteLock = NSLock()
+    private static var recentSelfWrites: [(hash: String, at: Date)] = []
+    private static let selfWriteWindow: TimeInterval = 2.5
+
+    public static func isRecentSelfWrite(hash: String) -> Bool {
+        selfWriteLock.lock()
+        defer { selfWriteLock.unlock() }
+        let cutoff = Date().addingTimeInterval(-selfWriteWindow)
+        recentSelfWrites.removeAll { $0.at < cutoff }
+        return recentSelfWrites.contains { $0.hash == hash }
+    }
+
+    private static func noteSelfWrite(hashes: [String]) {
+        guard !hashes.isEmpty else { return }
+        selfWriteLock.lock()
+        defer { selfWriteLock.unlock() }
+        let now = Date()
+        recentSelfWrites.append(contentsOf: hashes.map { (hash: $0, at: now) })
+        if recentSelfWrites.count > 20 {
+            recentSelfWrites.removeFirst(recentSelfWrites.count - 20)
+        }
+    }
+
     public static func write(_ entry: ClipEntry, to pasteboard: NSPasteboard = .general) {
         let startedAt = Date()
         let details = [
@@ -48,6 +74,7 @@ public enum ClipPasteboardWriter {
                 ], uniquingKeysWith: { _, new in new })
             )
             pasteboard.writeObjects(writers)
+            noteSelfWrite(hashes: [entry.contentHash])
         }
         let elapsedMs = milliseconds(since: startedAt)
         DiagnosticsLogbook.shared.actionOutput(
@@ -101,6 +128,7 @@ public enum ClipPasteboardWriter {
                 ], uniquingKeysWith: { _, new in new })
             )
             pasteboard.writeObjects(writers)
+            noteSelfWrite(hashes: entries.map(\.contentHash))
         }
         let elapsedMs = milliseconds(since: startedAt)
         DiagnosticsLogbook.shared.actionOutput(

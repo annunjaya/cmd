@@ -49,10 +49,14 @@ final class CopyColorPopController {
     nonisolated func flash(for entry: ClipEntry) {
         // onNewEntry fires on the pasteboard watcher queue. Bounce to main
         // before touching ClipLogSettings / AppKit.
+        // Skips our own paste/copy writes: pasting from the HUD rewrites the
+        // pasteboard and the watcher re-captures it, which must not pop.
         let captured = entry
+        guard !ClipPasteboardWriter.isRecentSelfWrite(hash: captured.contentHash) else { return }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 guard ClipLogSettings.shared.copyPopEnabled else { return }
+                guard !ClipPasteboardWriter.isRecentSelfWrite(hash: captured.contentHash) else { return }
                 let color = Self.color(for: captured.contentType)
                 let reduceMotion = AccessibilityEnvironment.shared.shouldReduceMotion
                 Self.shared.show(color: color, reduceMotion: reduceMotion, entryType: captured.contentType.rawValue)
